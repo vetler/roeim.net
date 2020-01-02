@@ -1,0 +1,401 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+  <style type="text/css">
+    body {
+      font-family: sans-serif;
+      margin-left: 10%;
+      margin-right: 15%;
+      background: white;
+      color: black;
+    }
+
+    ol {
+      font-size: 85%;
+    }
+
+    h1 {
+      border-bottom: 2px solid black;
+      font-variant: small-caps;
+    }
+
+    h2 {
+      font-variant: small-caps;
+      text-decoration: underline;
+    }
+
+    pre, table {
+      border: 1px solid silver;
+      background: #f5f5f5;
+      padding: 4px;
+    }
+
+    table {
+      width: 100%;
+    }
+  </style>
+  <link rel="stylesheet" type="text/css" href="colorize.css"/>
+
+  <title>Implementing a blog in Common Lisp: Part 3</title>
+</head>
+<body>
+  <h1>Implementing a blog in Common Lisp: Part 3</h1>
+  <div style="text-align: right; font-size: 80%; font-style: italic">by <a href="http://roeim.net/vetle/">Vetle Roeim</a> - last updated 2008-01-26</div>
+
+  <h2>Table of contents</h2>
+  <ol>
+    <li><a href="#s1">Introduction</a></li>
+    <li><a href="#s2">Creating a new blog post</a></li>
+    <li><a href="#s3">Outputting HTML</a></li>
+    <li><a href="#s4">HTTP authentication</a></li>
+    <li><a href="#s5">Packaging - step 1: The system definition</a></li>
+    <li><a href="#s6">Packaging - step 2: ASDF-Installable</a></li>
+    <li><a href="#s6">End of part 3</a></li>
+  </ol>
+
+  <h2><a name="s1">Introduction</a></h2>
+  <p>
+    This is the continuation of a tutorial showing how a blog can
+    easily be implemented in Common Lisp. <i>This is part 3 of the
+    tutorial, <a href="/vetle/docs/cl-webapp-intro/part-1/">part 1</a>
+    and <a href="/vetle/docs/cl-webapp-intro/part-2/">part 2</a>
+    should be read first.</i>
+  </p>
+
+  <p>
+    This part wraps up the tutorial by fixing some outstanding issues,
+    such as creating a new blog post, outputting HTML, HTTP
+    authorization and packaging. For your convenience, the source code
+    of the files created in this tutorial can
+    be <a href="source">downloaded</a> (note that this is the final
+    code for this part of the tutorial, and that it goes through many
+    steps).
+  </p>
+
+  <h2><a name="s2">Creating new blog post</a></h2>
+  <p>
+    In the previous part of the tutorial, we showed how to edit blog
+    posts, but it is obviously a little awkward to have to create new
+    blog posts in the REPL, so let us make a page for creating new
+    blog posts. First, we decide which URL to use for showing the
+    form, and add it to the dispatch table. Let's
+    use <code>/create/</code>, and have it map to a function we
+    call <code>create-blog-post</code>.
+  </p>
+
+<table width="100%"><tr><td class="default"><tt>
+<span class="comment">; Set the web server dispatch table<br>
+</span><span class="paren1">(<span class="default"><i><span class="symbol">setq</span></i> <span class="special">hunchentoot:*dispatch-table*</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren2">(<span class="default">list <span class="paren3">(<span class="default">hunchentoot:create-regex-dispatcher <span class="string">"^/$"</span> 'generate-index-page</span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren3">(<span class="default">hunchentoot:create-regex-dispatcher <span class="string">"^/view/$"</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;'view-blog-post-page</span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren3">(<span class="default">hunchentoot:create-regex-dispatcher <span class="string">"^/edit/$"</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;'edit-blog-post</span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren3">(<span class="default">hunchentoot:create-regex-dispatcher <span class="string">"^/create/$"</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;'create-blog-post</span>)</span></span>)</span></span>)</span>
+</tt></td></tr></table>
+
+  <p>
+    Next, we define <codE>create-blog-post</code>. If it's a GET
+    request, we just show the form, if it's a POST request, we read
+    input data, create the new blog post and redirect to it.
+  </p>
+
+<table width="100%"><tr><td class="default"><tt>
+<span class="paren1">(<span class="default"><i><span class="symbol">defun</span></i> create-blog-post <span class="paren2">(<span class="default"></span>)</span><br>&nbsp;&nbsp;<span class="paren2">(<span class="default"><i><span class="symbol">with-http-authentication</span></i><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren3">(<span class="default"><i><span class="symbol">cond</span></i> <span class="paren4">(<span class="default"><span class="paren5">(<span class="default">eq <span class="paren6">(<span class="default">hunchentoot:request-method</span>)</span> <span class="keyword">:GET</span></span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren5">(<span class="default"><i><span class="symbol">with-output-to-string</span></i> <span class="paren6">(<span class="default">stream</span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren6">(<span class="default">html-template:fill-and-print-template #P<span class="string">"post-form.tmpl"</span> nil <br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="keyword">:stream</span> stream</span>)</span></span>)</span></span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren4">(<span class="default"><span class="paren5">(<span class="default">eq <span class="paren6">(<span class="default">hunchentoot:request-method</span>)</span> <span class="keyword">:POST</span></span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren5">(<span class="default">save-new-blog-post</span>)</span></span>)</span></span>)</span></span>)</span></span>)</span>
+</tt></td></tr></table>
+
+  <p>
+    Here we can cheat a bit, and rename <code>post-edit.tmpl</code>
+    to <code>post-form.tmpl</code>, to use the same file for both
+    editing and creating new blog posts. The template can be used
+    as-is, except that in order to have it say <i>Create blog post</i>
+    instead of <i>Edit blog post</i>, we have to
+    use <code>tmpl_if</code> in the template to test if any blog post
+    data was supplied.
+  </p>
+
+  <pre>
+&lt;!-- tmpl_if url-part --&gt;
+  &lt;h1&gt;Edit blog post&lt;/h1&gt;
+&lt;!-- tmpl_else --&gt;
+  &lt;h1&gt;Create blog post&lt;/h1&gt;
+&lt;!-- /tmpl_if --&gt;
+  </pre>
+
+
+  <p>
+    Then, <code>save-new-blog-post</code> simply
+    calls <code>make-instance</code> to create a new blog-post object
+    and then redirect to the page showing it.
+  </p>
+
+<table width="100%"><tr><td class="default"><tt>
+<span class="paren1">(<span class="default"><i><span class="symbol">defun</span></i> save-new-blog-post <span class="paren2">(<span class="default"></span>)</span><br>&nbsp;&nbsp;<span class="paren2">(<span class="default"><i><span class="symbol">let</span></i> <span class="paren3">(<span class="default"><span class="paren4">(<span class="default">blog-post <span class="paren5">(<span class="default">make-instance 'blog-post <br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="keyword">:title</span> <span class="paren6">(<span class="default">hunchentoot:post-parameter <span class="string">"title"</span></span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="keyword">:body</span> <span class="paren6">(<span class="default">hunchentoot:post-parameter <span class="string">"body"</span></span>)</span></span>)</span></span>)</span></span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren3">(<span class="default">hunchentoot:redirect <span class="paren4">(<span class="default">url-part blog-post</span>)</span></span>)</span></span>)</span></span>)</span><br><br>
+</tt></td></tr></table>
+
+  <h2><a name="s3">Outputting HTML</a></h2>
+  <p>
+    Although it's now possible to create and edit blog posts, if you
+    try to write blog posts containing HTML, it will all be
+    escaped. Luckily it's easy to change this
+    behaviour. <strong>html-template</strong> applies whatever
+    function <code>*string-modifier*</code> points to, to any string
+    that is used by <code>tmpl_var</code> in the template.
+  </p>
+
+  <p>
+    By setting it temporarily
+    to <a href="http://www.lispworks.com/documentation/HyperSpec/Body/f_identi.htm"><code>#'cl:identity</code></a>,
+    which will simply return the value of the object we pass it -
+    i.e. the unescaped string. We will need to add this both
+    to <code>generate-index-page</code>
+    and <code>generate-blog-post-page</code>
+  </p>
+
+<table width="100%"><tr><td class="default"><tt>
+<span class="paren1">(<span class=""><i><span class="symbol">defun</span></i> generate-index-page <span class="paren2">(<span class=""></span>)</span><br>&nbsp;&nbsp;<span class="string">"Generate the index page showing all the blog posts."</span><br>&nbsp;&nbsp;<span class="paren2">(<span class=""><i><span class="symbol">with-output-to-string</span></i> <span class="paren3">(<span class="">stream</span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren3">(<span class=""><i><span class="symbol">let</span></i> <span class="paren4">(<span class=""><span class="paren5">(<span class=""><span class="special">html-template:*string-modifier*</span> <b>#'identity</b></span>)</span></span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren4">(<span class="">html-template:fill-and-print-template ...</span>)</span></span>)</span></span>)</span></span>)</span>
+</tt></td></tr></table>
+
+<br/>
+
+<table width="100%"><tr><td class="default"><tt>
+<span class="paren1">(<span class=""><i><span class="symbol">defun</span></i> generate-blog-post-page <span class="paren2">(<span class="">template</span>)</span><br>&nbsp;&nbsp;<span class="string">"Generate a page using blog post data."</span><br>&nbsp;&nbsp;<span class="paren2">(<span class=""><i><span class="symbol">let</span></i> <span class="paren3">(<span class=""><span class="paren4">(<span class="">url-part <span class="paren5">(<span class="">hunchentoot:query-string</span>)</span></span>)</span></span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren3">(<span class=""><i><span class="symbol">with-output-to-string</span></i> <span class="paren4">(<span class="">stream</span>)</span> <span class="comment">; Create a stream that will give us a sting<br>
+</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren4">(<span class=""><i><span class="symbol">let</span></i> <span class="paren5">(<span class=""><span class="paren6">(<span class="">blog-post <span class="paren1">(<span class="">get-instance-by-value 'blog-post 'url-part url-part</span>)</span></span>)</span> <span class="comment">; Get the right blog post<br>
+</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren6">(<span class=""><span class="special">html-template:*string-modifier*</span> <b>#'identity</b></span>)</span></span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren5">(<span class="">html-template:fill-and-print-template ...</span>)</span></span>)</span></span>)</span></span>)</span></span>)</span>
+</tt></td></tr></table>
+
+  <p>
+    Now any HTML you enter in the blog posts should be output
+    unescaped as HTML in the templates.
+  </p>
+
+  <h2><a name="s4">HTTP authentication</a></h2>  
+  <p>
+    As our blog is now, anyone can edit and create new blog posts. To
+    add some form of authentication, let us write a macro that we will
+    call <code>with-http-authentication</code>, that automatically makes it
+    necessary for the user to log in with basic HTTP
+    authentication.
+  </p>
+
+  <p>
+    We should be able to use the finished macro as shown below.
+  </p>
+
+<table width="100%"><tr><td class="default"><tt>
+<span class="paren1">(<span class=""><i><span class="symbol">defun</span></i> edit-blog-post <span class="paren2">(<span class=""></span>)</span><br>&nbsp;&nbsp;<span class="paren2">(<span class=""><i><span class="symbol">with-http-authentication</span></i><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren3">(<span class=""><i><span class="symbol">cond</span></i> <span class="paren4">(<span class=""><span class="paren5">(<span class="">eq <span class="paren6">(<span class="">hunchentoot:request-method</span>)</span> <span class="keyword">:GET</span></span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren5">(<span class="">generate-blog-post-page #P<span class="string">"post-form.tmpl"</span></span>)</span></span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren4">(<span class=""><span class="paren5">(<span class="">eq <span class="paren6">(<span class="">hunchentoot:request-method</span>)</span> <span class="keyword">:POST</span></span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren5">(<span class="">update-blog-post</span>)</span></span>)</span></span>)</span></span>)</span></span>)</span>
+</tt></td></tr></table>
+
+  <p>
+    The macro is fairly simple - get the authorization data, check it
+    against a predefined username and password. If they don't match,
+    send HTTP headers requiring authorization.
+  </p>
+
+<table width="100%"><tr><td class="default"><tt>
+<span class="paren1">(<span class=""><i><span class="symbol">defmacro</span></i> <i><span class="symbol">with-http-authentication</span></i> <span class="paren2">(<span class="">&amp;rest body</span>)</span><br>&nbsp;&nbsp;`<span class="paren2">(<span class="">multiple-value-bind <span class="paren3">(<span class="">username password</span>)</span> <span class="paren3">(<span class="">hunchentoot:authorization</span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren3">(<span class=""><i><span class="symbol">cond</span></i> <span class="paren4">(<span class=""><span class="paren5">(<span class="">and <span class="paren6">(<span class="">string= username <span class="special">*username*</span></span>)</span> <span class="paren6">(<span class="">string= password <span class="special">*password*</span></span>)</span></span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;,@body</span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren4">(<span class="">t <span class="paren5">(<span class="">hunchentoot:require-authorization <span class="string">"my-blog"</span></span>)</span></span>)</span></span>)</span></span>)</span></span>)</span>
+</tt></td></tr></table>
+
+  <p>
+    With that in place, it is just a matter of wrapping anything we
+    want protected with this macro.
+  </p>
+
+  <h2><a name="s5">Packaging - step 1: The system definition</a></h2>  
+  
+  <p>
+    Finally, after much hard work, the blog is ready. Well, not
+    entirely, but let's pretend.
+  </p>
+
+  <p>
+    The only thing left now is to make
+    it <a href="http://www.cliki.net/ASDF-Install">ASDF
+    installable</a>. <strong>ASDF</strong> is short for Another System
+    Definition Facility, and is basically for creating a system
+    definition that describes the dependencies of your application or
+    library. This will make it easy to install your application and
+    its dependencies.
+  </p>
+
+  <p>
+    We will put the system definition in a file
+    called <a href="source/my-blog.html"><code>my-blog.asd</code></a>. The system definition is put in a
+    separate package, so the first few lines in this file are used for
+    setting up this package.
+  </p>
+
+<table width="100%"><tr><td class="default"><tt>
+<span class="paren1">(<span class=""><i><span class="symbol">defpackage</span></i> <span class="keyword">#:my-blog-asd</span><br>&nbsp;&nbsp;<span class="paren2">(<span class=""><span class="keyword">:use</span> <span class="keyword">:cl</span> <span class="keyword">:asdf</span></span>)</span></span>)</span><br><br>
+<span class="paren1">(<span class="">in-package <span class="keyword">:my-blog-asd</span></span>)</span>
+</tt></td></tr></table>
+
+  <p>
+    Next comes our system definition, which we define
+    with <code>defsystem</code>. This can take several parameters,
+    and only the name of the system is mandatory.
+  </p>
+
+  <p>
+    In this case, the important parameters
+    are <code>:components</code>, which will define which files that
+    are part of our system, and <code>:depends-on</code>, which
+    defines which packages our system requires to run. The final
+    result can be seen below, and should be self explanatory.
+  </p>
+
+<table width="100%"><tr><td class="default"><tt>
+<span class="paren1">(<span class=""><i><span class="symbol">defsystem</span></i> my-blog<br>&nbsp;&nbsp;<span class="keyword">:name</span> <span class="string">"my-blog"</span><br>&nbsp;&nbsp;<span class="keyword">:version</span> <span class="string">"0.0.0"</span><br>&nbsp;&nbsp;<span class="keyword">:author</span> <span class="string">"Your name"</span><br>&nbsp;&nbsp;<span class="keyword">:description</span> <span class="string">"A fantastic blog"</span><br>&nbsp;&nbsp;<span class="keyword">:components</span> <span class="paren2">(<span class=""><span class="paren3">(<span class=""><span class="keyword">:file</span> <span class="string">"blog"</span></span>)</span></span>)</span><br>&nbsp;&nbsp;<span class="keyword">:depends-on</span> <span class="paren2">(<span class=""><span class="string">"elephant"</span> <span class="string">"hunchentoot"</span> <span class="string">"html-template"</span></span>)</span></span>)</span>
+</tt></td></tr></table>
+
+  <p>
+    For more information on how to define systems, I recommend
+    the <a href="http://common-lisp.net/~mmommer/asdf-howto.shtml">ASDF
+    howto</a> or the <a href="http://constantly.at/lisp/asdf/">ASDF
+    manual</a>.
+  </p>
+
+  <p>
+    At this stage we will have to make some changes
+    to <code>blog.lisp</code>. First, we can remove any calls
+    to <code>require</code>, as this is now handled
+    by <strong>ASDF</strong>, since we have defined the packages that
+    are required for this system. Second, I found that the
+    initialization of our <strong>Elephant</strong> store and starting
+    the web server had to be put into a separate function, or loading
+    of the system would never complete.
+  </p>
+
+  <p>
+    Our new function, <code>start-blog</code> will simply wrap the
+    existing code we have for initializing the store and starting the web server.
+  </p>
+
+<table width="100%"><tr><td class="default"><tt>
+<span class="paren1">(<span class=""><i><span class="symbol">defun</span></i> start-blog <span class="paren2">(<span class=""></span>)</span><br>&nbsp;&nbsp;<span class="string">"Open the Elephant store and start the web server."</span><br>&nbsp;&nbsp;<span class="comment">; Open the store where our data is stored<br>
+</span> &nbsp;<span class="paren2">(<span class=""><i><span class="symbol">defvar</span></i> <span class="special">*elephant-store*</span> <span class="paren3">(<span class="">open-store '<span class="paren4">(<span class=""><span class="keyword">:clsql</span> <span class="paren5">(<span class=""><span class="keyword">:sqlite3</span> <span class="string">"/tmp/blog.db"</span></span>)</span></span>)</span></span>)</span></span>)</span><br>&nbsp;&nbsp;<span class="comment">; Start the web server<br>
+</span> &nbsp;<span class="paren2">(<span class=""><i><span class="symbol">defvar</span></i> <span class="special">*ht-server*</span> <span class="paren3">(<span class="">hunchentoot:start-server <span class="keyword">:port</span> 8080</span>)</span></span>)</span></span>)</span>
+</tt></td></tr></table>
+
+  <p>
+    We can also export this symbol, so that we can call this function
+    from outside the <code>my-blog</code> package. This is done in the
+    package definition, by using the <code>:export</code> parameter.
+  </p>
+
+<table width="100%"><tr><td class="default"><tt>
+<span class="paren1">(<span class=""><i><span class="symbol">defpackage</span></i> <span class="keyword">:my-blog</span><br>&nbsp;&nbsp;<span class="paren2">(<span class=""><span class="keyword">:use</span> <span class="keyword">:cl</span> <span class="keyword">:elephant</span></span>)</span><br>&nbsp;&nbsp;<span class="paren2">(<span class=""><span class="keyword">:export</span> <span class="keyword">:start-blog</span></span>)</span></span>)</span>
+</tt></td></tr></table>
+
+  <p>
+    At this stage we can load the blog
+    using <strong>ASDF</strong>. The
+    list <code>*central-registry*</code> contains a list of paths
+    where it will look for system definitions, so we have to add the
+    path to where our source code is (temporarily) to this list.
+  </p>
+
+  <pre>
+CL-USER&gt; (let ((asdf:*central-registry* 
+                (append asdf:*central-registry* '(#P"/Users/vetler/Documents/devel/cl-webapp-intro-part3/source/"))))
+           (asdf:operate 'asdf:load-op 'my-blog))  
+  </pre>
+
+  <p>
+    The required packages should now be loaded, and the blog can be
+    started by running <code>start-blog</code>.
+  </p>
+
+  <pre>
+CL-USER&gt; (my-blog:start-blog)
+...
+  </pre>
+
+  <h2><a name="s6">Packaging - step 1: ASDF-Installable</a></h2>    
+
+  <p>
+    With many packages, it is possible to simply
+    write <code>(asdf-install:install :package-name</code> to install
+    them. This will search for the package
+    on <a href="http://cliki.net">cliki.net</a> and download the
+    package if it can find it. <code>asdf-install:install</code> can
+    also take a URL to where the package can be downloaded, which is
+    what we will make it possible to do with our package now.
+  </p>
+
+  <p>
+    The first step is to remove the line in <code>blog.lisp</code>
+    that
+    sets <code>html-template:*default-template-pathname*</code>. When
+    our package is installed, it will run within the context of the
+    path where our source code is, so we don't need to worry about
+    finding the templates.
+  </p>
+
+  <p>
+    Second, we create a <code>.tar.gz</code> package containing a
+    directory with our files.
+  </p>
+  
+  <pre>
+$ mkdir my-blog
+$ cp blog.lisp my-blog.asd my-blog
+$ tar zcvf my-blog.tar.gz my-blog
+my-blog/
+my-blog/blog.lisp
+my-blog/my-blog.asd
+$ 
+  </pre>
+  
+  <p>
+    Now we will have <code>my-blog.tar.gz</code> which we can upload
+    to a web server and install
+    with <code>asdf-install:install</code>.
+  </p>
+  
+  <pre>
+(asdf-install:install "http://www.dirtyhack.org/vetler/docs/cl-webapp-intro/part-3/source/my-blog.tar.gz")
+  </pre>
+
+  <p>
+    When installing, skip PGP check, and the application should now be
+    installed. Now we can start it as before, by
+    loading <code>my-blog</code> and running <code>start-blog</code>.
+  </p>
+
+  <pre>
+CL-USER&gt; (require 'my-blog)
+...
+CL-USER&gt; (my-blog:start-blog)
+  </pre>
+
+  <p>
+    Alternativly you might have to use <code>asdf:operate</code>
+    instead of <code>require</code> to load the system, like this: <code>(asdf:operate 'asdf:load-op
+    'my-blog)</code>.
+  </p>
+
+  <h2><a name="s7">End of part 3</a></h2>
+
+  <p>
+    This concludes part 3 and ends this tutorial. We have now gone
+    through how to create a simple web application using a few
+    available packages. I hope you have enjoyed this short tutorial
+    and that it can inspire you to implement web applications in
+    Common Lisp.
+  </p>
+
+  <p>
+    There are many other packages available, and for web development
+    and database access, I can also
+    recommend <a href="http://common-lisp.net/project/cl-weblocks/">Weblocks</a>
+    and <a href="http://clsql.b9.com/">CLSQL</a>.
+  </p>
+
+
+<script type="text/javascript">
+var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
+document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
+</script>
+<script type="text/javascript">
+try {
+var pageTracker = _gat._getTracker("UA-7029768-1");
+pageTracker._trackPageview();
+} catch(err) {}</script>
+</body>
+</html>
