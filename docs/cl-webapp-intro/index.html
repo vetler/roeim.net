@@ -1,0 +1,401 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+  <style type="text/css">
+    body {
+      font-family: sans-serif;
+      margin-left: 10%;
+      margin-right: 15%;
+      background: white;
+      color: black;
+    }
+
+    ol {
+      font-size: 85%;
+    }
+
+    h1 {
+      border-bottom: 2px solid black;
+      font-variant: small-caps;
+    }
+
+    h2 {
+      font-variant: small-caps;
+      text-decoration: underline;
+    }
+
+    pre, table {
+      border: 1px solid silver;
+      background: #f5f5f5;
+      padding: 4px;
+    }
+  </style>
+  <link rel="stylesheet" type="text/css" href="colorize.css"/>
+
+  <title>Implementing a blog in Common Lisp: Part 1</title>
+</head>
+<body>
+  <h1>Implementing a blog in Common Lisp: Part 1</h1>
+  <div style="text-align: right; font-size: 80%; font-style: italic">by <a href="http://roeim.net/vetle/">Vetle Roeim</a> - last updated 2009-01-15</div>
+
+  <h2>Table of Contents</h2>
+  <ol>
+    <li><a href="#s1">Introduction</a></li>
+    <li><a href="#s2">Getting started</a></li>
+    <li><a href="#s3">The Model</a></li>
+    <li><a href="#s4">Setting up the persistent store</a></li>
+    <li><a href="#s5">Generating a web page</a></li>
+    <li><a href="#s6">Serving the web page</a></li>
+    <li><a href="#s7">End of part 1</a></li>
+  </ol>
+
+  <h2><a name="s1">Introduction</a></h2>
+  <p>
+    This tutorial will show how a blog can easily be implemented in
+    Common Lisp, using a few frameworks. Installing these frameworks
+    is not covered, and neither are details on getting Common Lisp
+    implementation up and running.
+  </p>
+
+  <p>
+    Part 1 shows how data can be stored persistently, and how HTML
+    pages can be generated and served to the end-user.  For your
+    convenience, the source code of the files created in this tutorial
+    can
+    be <a href="source">downloaded</a>.
+  </p>
+
+  <p>
+    The frameworks I'll be using are:
+  </p>
+  <ul>
+    <li><a href="http://www.weitz.de/hunchentoot/"><strong>Hunchentoot</strong></a> - a web server</li>
+    <li><a href="http://www.weitz.de/html-template/"><strong>html-template</strong></a> - a templating language</li>
+    <li><a href="http://common-lisp.net/project/elephant/"><strong>Elephant</strong></a> - object persistence</li>
+  </ul>
+
+  <p style="background-color: #ffff99; padding: 1em; border: solid
+  #dddd77 1px;"><b>Update:</b> <i><a href="/vetle/docs/cl-webapp-intro/part-2">Part
+  2</a> of this tutorial is now available.</i></p>
+  
+
+
+  <h2><a name="s2">Getting started</a></h2>
+  <p>
+    First, let's define the package that will hold our code and load
+    the packages that we require.
+  </p>
+<table width="100%"><tr><td class="default">
+<tt><span class="paren1">(<span class="default">in-package <span class="keyword">:cl-user</span></span>)</span><br><br>
+<span class="paren1">(<span class="default"><i><span class="symbol">defpackage</span></i> <span class="keyword">:my-blog</span><br>&nbsp;&nbsp;<span class="paren2">(<span class="default"><span class="keyword">:use</span> <span class="keyword">:common-lisp</span></span>)</span></span>)</span><br><br>
+<span class="paren1">(<span class="default">in-package <span class="keyword">:my-blog</span></span>)</span><br>
+<span class="paren1">(<span class="default">require <span class="keyword">:hunchentoot</span></span>)</span><br>
+<span class="paren1">(<span class="default">require <span class="keyword">:html-template</span></span>)</span><br>
+<span class="paren1">(<span class="default">require <span class="keyword">:elephant</span></span>)</span><br>
+<span class="paren1">(<span class="default">use-package <span class="keyword">:elephant</span></span>)</span><br><br>
+</tt></td></tr>
+</table>
+
+  <p>
+    After <code>in-package</code> comes our package content. First, we
+    make sure we have the necessary libraries loaded, by
+    using <code>require</code>. Next, we use the
+    function <code>use-package</code> to load the symbols exported by
+    Elephant into our local namespace. Without this, we would have to
+    prefix use of those symbols with <code>elephant:</code>, as we
+    will see be done with the other packages.
+ </p>
+
+  <h2><a name="s3">The Model</a></h2>
+  <p>
+    Next, we define our model. To keep this simple, we will just
+    define a class for our blog posts, and then put them all in a
+    list. Alternativly, we could have defined a <code>blog</code>
+    class that would be a container for our blog posts.
+  </p>
+
+<table width="100%"><tr><td class="default">
+<tt><span class="paren1">(<span class="default"><i><span class="symbol">defpclass</span></i> blog-post <span class="paren2">(<span class="default"></span>)</span><br>&nbsp;&nbsp;<span class="paren2">(<span class="default"><span class="paren3">(<span class="default">title <span class="keyword">:initarg</span> <span class="keyword">:title</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="keyword">:accessor</span> title</span>)</span><br>&nbsp;&nbsp;&nbsp;<span class="paren3">(<span class="default">body <span class="keyword">:initarg</span> <span class="keyword">:body</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="keyword">:accessor</span> body</span>)</span><br>&nbsp;&nbsp;&nbsp;<span class="paren3">(<span class="default">timestamp <span class="keyword">:initarg</span> <span class="keyword">:timestamp</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="keyword">:accessor</span> timestamp<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="keyword">:initform</span> <span class="paren4">(<span class="default">get-universal-time</span>)</span></span>)</span></span>)</span></span>)</span>
+</tt></td></tr></table>
+
+  <p>
+    Here we define a new class, <code>blog-post</code>, which has
+    three attributes: <code>title</code>, <code>body</code>
+    and <code>timestamp</code>. Notice that we're using
+    Elephants <code>defpclass</code> macro, instead
+    of <code>defclass</code> which is the normal way of declaring
+    classes.
+  </p>
+
+  <p>
+    <code>defpclass</code> makes sure that the class uses
+    the <code>persistent-metaclass</code> metaclass, which adds
+    persistence to our class. Alternativly, we could have written
+    using <code>defclass</code> and setting the metaclass ourselves.
+  </p>
+
+<table width="100%"><tr><td class="default">  
+<tt><span class="paren1">(<span class="default"><i><span class="symbol">defclass</span></i> blog-post <span class="paren2">(<span class="default"></span>)</span><br>&nbsp;&nbsp;<span class="paren2">(<span class="default"><span class="paren3">(<span class="default">title <span class="keyword">:initarg</span> <span class="keyword">:title</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="keyword">:accessor</span> title</span>)</span><br>&nbsp;&nbsp;&nbsp;<span class="paren3">(<span class="default">body <span class="keyword">:initarg</span> <span class="keyword">:body</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="keyword">:accessor</span> body</span>)</span><br>&nbsp;&nbsp;&nbsp;<span class="paren3">(<span class="default">timestamp <span class="keyword">:initarg</span> <span class="keyword">:timestamp</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="keyword">:accessor</span> timestamp<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="keyword">:initform</span> <span class="paren4">(<span class="default">get-universal-time</span>)</span></span>)</span></span>)</span><br>&nbsp;&nbsp;<span class="paren2">(<span class="default"><span class="keyword">:metaclass</span> persistent-metaclass</span>)</span></span>)</span>
+</tt></td></tr></table>
+
+  <h2><a name="s4">Setting up the persistent store</a></h2>
+  <p>
+    We're almost ready to start creating blog posts, but we will first
+    need to tell Elephant where to store our data. In this example I
+    will use CLSQL and SQLite, but there are several other alternatives.
+  </p>
+
+<table width="100%"><tr><td class="default">  
+<tt><span class="comment">; Open the store where our data is stored<br></span><span class="paren1">(<span class="default"><i><span class="symbol">defvar</span></i> <span class="special">*elephant-store*</span> <span class="paren2">(<span class="default">open-store '<span class="paren3">(<span class="default"><span class="keyword">:clsql</span> <span class="paren4">(<span class="default"><span class="keyword">:sqlite3</span> <span class="string">"/tmp/blog.db"</span></span>)</span></span>)</span></span>)</span></span>)</span><br><br>
+<span class="comment">; Container for all our blog posts<br>
+</span><span class="paren1">(<span class="default"><i><span class="symbol">defvar</span></i> <span class="special">*blog-posts*</span> <span class="paren2">(<span class="default">or <span class="paren3">(<span class="default">get-from-root <span class="string">"blog-posts"</span></span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren3">(<span class="default"><i><span class="symbol">let</span></i> <span class="paren4">(<span class="default"><span class="paren5">(<span class="default">blog-posts <span class="paren6">(<span class="default">make-pset</span>)</span></span>)</span></span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren4">(<span class="default">add-to-root <span class="string">"blog-posts"</span> blog-posts</span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;blog-posts</span>)</span></span>)</span></span>)</span>
+</tt></td></tr></table>
+  
+  <p>
+    In the first line here, the function <code>open-store</code> is
+    called, which tells Elephant to open a new persistent store where
+    our data is to be stored. The parameters tell it to use the CLSQL
+    package, and SQLite3. The store object is put into a variable in
+    case we need it later.
+  </p>
+  
+  <p>
+    The next line defines a variable that will contain all our blog
+    posts. It is either retrieved from the Elephant store
+    using <code>get-from-root</code>, but if it's not found then a
+    new <code>pset</code> is created and added to the store.
+  </p>
+
+  <p>
+    The reason for using <code>pset</code> instead of a normal Common
+    Lisp collection such as a list, is that operations which change
+    these do not have persistent side effects. In other words; if we
+    want collections that are persistent, we have to use classes
+    provided by Elephant. Two classes are provided: <code>pset</code>
+    which provides a persistent and unordered collection of objects,
+    and <code>btree</code> which provides persistent collection of
+    key-value pairs.
+  </p>
+
+  <p>
+    Let's create a blog post and see if things work.
+  </p>
+
+  <pre>
+CL-USER&gt; (in-package :my-blog)
+#&lt;PACKAGE "MY-BLOG"&gt;
+MY-BLOG&gt; (setq first-post (make-instance 'blog-post :title "Hello blog world"
+                                         :body "First post!"))
+#&lt;BLOG-POST oid:5&gt;
+MY-BLOG&gt; (insert-item first-post *blog-posts*)
+#&lt;BLOG-POST oid:5&gt;
+MY-BLOG&gt; 
+  </pre>
+
+  <p>
+    Ok, so far so good. Let's stop the Lisp instance and see if the
+    blog post was stored.
+  </p>
+
+  <pre>
+CL-USER&gt; (in-package :my-blog)
+#&lt;PACKAGE "MY-BLOG"&gt;
+MY-BLOG&gt; *blog-posts*
+#&lt;DEFAULT-PSET oid:4&gt;
+MY-BLOG&gt; (pset-list *blog-posts*)
+(#&lt;BLOG-POST oid:5&gt;)
+MY-BLOG&gt; (title (first (pset-list *blog-posts*)))
+"Hello blog world"
+MY-BLOG&gt; 
+  </pre>
+
+  <p>
+    When we load our package again, we can see that
+    the <code>*blog-posts*</code> is defined, as we would expect, and
+    when we generate a list of the contents of the <code>pset</code>
+    using <code>pset-list</code>, we can see that it contains the blog
+    posts that we created.
+  </p>
+
+  <p>
+    Let's create another blog post for good measure.
+  </p>
+  <pre>
+MY-BLOG&gt; (insert-item (make-instance 'blog-post :title "This is fun"
+                                         :body "Common Lisp is easy!") *blog-posts*)
+#&lt;BLOG-POST oid:6&gt;
+MY-BLOG&gt; 
+  </pre>
+
+  <h2><a name="s5">Generating a web page</a></h2>
+  <p>
+    Now that we have the possibility of storing and fetching blog
+    posts, we need to somehow generate a web page containing the blog
+    posts. We will do this using the <strong>html-template</strong>
+    framework.  We will create a single template, which simply
+    displays all blog posts on a single page.
+  </p>
+
+  <pre>
+&lt;!DOCTYPE html&gt;
+&lt;html&gt;
+&lt;head&gt;
+  &lt;title&gt;My Blog&lt;/title&gt;
+&lt;/head&gt;
+&lt;body&gt;
+  &lt;h1&gt;My Blog&lt;/h1&gt;
+  
+  &lt;!-- tmpl_loop blog-posts --&gt;
+    &lt;div&gt;
+      &lt;h2&gt;&lt;!-- tmpl_var title --&gt;&lt;/h2&gt;
+      &lt;div&gt;
+        &lt;!-- tmpl_var body --&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+  &lt;!-- /tmpl_loop --&gt;
+  
+&lt;/body&gt;
+&lt;/html&gt;
+  </pre>
+
+  <p>
+    The format of <strong>html-template</strong> is based on the Perl module
+    <strong>HTML::Template</strong>. <code>tmpl_loop</code> will loop
+    over a collection, and <code>tmpl_var</code> will print the value
+    of the supplied parameters.
+  </p>
+
+  <p>
+    Next, we create a function that will use this template and
+    generate the final page.
+  </p>
+<table width="100%"><tr><td class="default">    
+<tt><span class="paren1">(<span class="default"><i><span class="symbol">defun</span></i> generate-index-page <span class="paren2">(<span class="default"></span>)</span><br>&nbsp;&nbsp;<span class="string">"Generate the index page showing all the blog posts."</span><br>&nbsp;&nbsp;<span class="paren2">(<span class="default"><i><span class="symbol">with-output-to-string</span></i> <span class="paren3">(<span class="default">stream</span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren3">(<span class="default">html-template:fill-and-print-template <br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;#P<span class="string">"index.tmpl"</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren4">(<span class="default">list <span class="keyword">:blog-posts</span> <br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren5">(<span class="default"><i><span class="symbol">loop</span></i> for blog-post in <span class="paren6">(<span class="default">pset-list <span class="special">*blog-posts*</span></span>)</span> <br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;collect <span class="paren6">(<span class="default">list <span class="keyword">:title</span> <span class="paren1">(<span class="default">title blog-post</span>)</span> <span class="keyword">:body</span> <span class="paren1">(<span class="default">body blog-post</span>)</span></span>)</span></span>)</span></span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="keyword">:stream</span> stream</span>)</span></span>)</span></span>)</span>
+</tt></td></tr></table>
+
+  <p>
+    Let's go through this step by step. First,
+    since <code>html-template::fill-and-print-template</code> needs to
+    print the resulting HTML to a stream, we use the
+    macro <code>with-output-to-string</code> to create a stream that
+    can be written to and that will return the result as a string.
+  </p>
+
+  <p>
+    Next, we call the function <code>fill-and-print-template</code>,
+    which does exactly that. Since it's in the
+    package <code>html-template</code>, we prefix it with the correct
+    namespace. The required parameters to this function are the
+    template that is to be rendered and parameters that are to be used
+    in the template. We also tell the function to print to our
+    character stream. The <code>loop</code> goes through the list of
+    blog posts and creates property lists for each post, containing
+    the title and body. To show how what the result of this loop , we
+    can run it separatly.
+  </p>
+  
+  <pre>
+MY-BLOG&gt; (loop for blog-post in (pset-list *blog-posts*) 
+              collect (list :title (title blog-post) :body (body blog-post)))
+((:TITLE "This is fun" :BODY "Common Lisp is easy!")
+ (:TITLE "Hello blog world" :BODY "First post!"))
+MY-BLOG&gt; 
+  </pre>
+
+  <p>
+    To make sure <code>fill-and-print</code> finds the correct file, we can set
+    variable <code>*default-template-pathname*</code> to point to
+    where our templates are.
+  </p>
+
+<table width="100%"><tr><td class="default">  
+<tt><span class="paren1">(<span class="default"><i><span class="symbol">setq</span></i> <span class="special">html-template:*default-template-pathname*</span> #P<span class="string">"/Users/vetler/Documents/devel/blog/source/"</span></span>)</span>
+</tt></td></tr></table>
+
+  <p>
+    Let's try it out.
+  </p>
+
+  <pre>
+MY-BLOG&gt; (generate-index-page)
+"&lt;!DOCTYPE html&gt;
+&lt;html&gt;
+&lt;head&gt;
+  &lt;title&gt;My Blog&lt;/title&gt;
+&lt;/head&gt;
+&lt;body&gt;
+  &lt;h1&gt;My Blog&lt;/h1&gt;
+  
+  
+    &lt;div&gt;
+      &lt;h2&gt;Hello blog world&lt;/h2&gt;
+      &lt;div&gt;
+        First post!
+      &lt;/div&gt;
+    &lt;/div&gt;
+  
+  
+&lt;/body&gt;
+&lt;/html&gt;"
+MY-BLOG&gt; 
+  </pre>
+
+  <h2><a name="s6">Serving the web page</a></h2>
+  <p>
+    Finally, we will need to set up a web server to serve our web
+    page. We will do this using <strong>Hunchentoot</strong>, a web server implemented
+    in Common Lisp.
+  </p>
+
+  <p>
+    Since we already have everything we need for generating the web
+    page, it's just a matter of telling the web server to call the
+    function for generating the web page and starting it.
+  </p>
+
+<table width="100%"><tr><td class="default"> 
+<tt><span class="paren1">(<span class="default"><i><span class="symbol">setq</span></i> <span class="special">hunchentoot:*dispatch-table*</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren2">(<span class="default">list <span class="paren3">(<span class="default">hunchentoot:create-prefix-dispatcher <span class="string">"/"</span> 'generate-index-page</span>)</span></span>)</span></span>)</span><br>
+<span class="paren1">(<span class="default"><i><span class="symbol">defvar</span></i> <span class="special">*ht-server*</span> <span class="paren2">(<span class="default">hunchentoot:start-server <span class="keyword">:port</span> 8080</span>)</span></span>)</span>
+</tt></td></tr></table>
+
+  <p>
+    The web server uses the <code>*dispatch-table*</code> to map URLs
+    to functions. In this example we simply create a mapping from the
+    root to our function, but it's also possible to create dispatchers
+    with regular expressions,
+    using <code>create-regex-dispatcher</code>.
+  </p>
+
+  <p>
+    Lastly the web server is started, at port 8080. That's it! Now
+    it's just a matter of pointing a browser
+    at <a href="http://localhost:8080/"><code>http://localhost:8080/</code></a>
+    and looking at our <a href="screenshot.png">beautiful blog</a>.
+  </p>
+
+  <h2><a name="s7">End of part 1</a></h2>
+  <p>
+    The basics of how to store data persistently and how to generate
+    and serve web pages should now be clear. Of course, there is some
+    essential functionality missing from our current
+    implementation. In the next part, it will be shown how show blog
+    posts on separate pages, edit content, and how to query the
+    Elephant store.
+  </p>
+
+  <p>
+    Until then, good luck with Common Lisp!
+  </p>
+
+<script type="text/javascript">
+var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
+document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
+</script>
+<script type="text/javascript">
+try {
+var pageTracker = _gat._getTracker("UA-7029768-1");
+pageTracker._trackPageview();
+} catch(err) {}</script>
+</body>
+</html>
