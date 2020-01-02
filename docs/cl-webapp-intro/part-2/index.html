@@ -1,0 +1,468 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+  <style type="text/css">
+    body {
+      font-family: sans-serif;
+      margin-left: 10%;
+      margin-right: 15%;
+      background: white;
+      color: black;
+    }
+
+    ol {
+      font-size: 85%;
+    }
+
+    h1 {
+      border-bottom: 2px solid black;
+      font-variant: small-caps;
+    }
+
+    h2 {
+      font-variant: small-caps;
+      text-decoration: underline;
+    }
+
+    pre, table {
+      border: 1px solid silver;
+      background: #f5f5f5;
+      padding: 4px;
+    }
+
+    table {
+      width: 100%;
+    }
+  </style>
+  <link rel="stylesheet" type="text/css" href="colorize.css"/>
+
+  <title>Implementing a blog in Common Lisp: Part 2</title>
+</head>
+<body>
+  <h1>Implementing a blog in Common Lisp: Part 2</h1>
+  <div style="text-align: right; font-size: 80%; font-style: italic">by <a href="http://roeim.net/vetle/">Vetle Roeim</a> - last updated 2009-01-15</div>
+
+  <h2>Table of contents</h2>
+  <ol>
+    <li><a href="#s1">Introduction</a></li>
+    <li><a href="#s2">Revamping the model</a></li>
+    <li><a href="#s3">Showing blog posts on separate pages</a></li>
+    <li><a href="#s4">Linking from the front page</a></li>
+    <li><a href="#s5">Editing blog posts</a></li>
+    <li><a href="#s6">End of part 2</a></li>
+  </ol>
+
+  <h2><a name="s1">Introduction</a></h2>
+  <p>
+    This is the continuation of a tutorial showing how a blog can
+    easily be implemented in Common Lisp. <i>This is part 2 of the
+    tutorial, <a href="/vetle/docs/cl-webapp-intro/part-1/">part 1</a>
+    should be read first.</i>
+  </p>
+
+  <p>
+    Here we expand the code from the first part of the tutorial with
+    functionality for showing each blog post on a separate page, and
+    an interface for editing them. For your convenience, the source
+    code of the files created in this tutorial can
+    be <a href="source">downloaded</a> (note that this is the final
+    code for this part of the tutorial, and that it goes through many
+    steps).
+  </p>
+
+  <p>
+    If you at any point get some unexplainable internal server error
+    when testing the web server, you can try enabling logging to file
+    by writing <code>(setf (hunchentoot:log-file)
+    "/tmp/error.log")</code>. For more info, see
+    the <a href="http://www.weitz.de/hunchentoot/#log">Hunchentoot
+    documentation</a>.
+  </p>
+
+  <p style="background-color: #ffff99; padding: 1em; border: solid
+  #dddd77 1px;"><b>Update:</b> <i><a href="/vetle/docs/cl-webapp-intro/part-3">Part
+  3</a> of this tutorial is now available.</i></p>
+  
+  <h2><a name="s2">Revamping the model</a></h2>
+  <p>
+    First off, to be able to show each blog post on a separate page,
+    we will need to be able to uniquely identify each individual blog
+    post. In our current model there is no attribute in
+    the <code>blog-post</code> class that we can use for this.
+  </p>
+
+  <p>
+    It is common in many blogs to generate a unique URL from the title
+    of the blog post, and we can use that to uniquely identify the
+    post in our code as well. First, we make a function to generate a
+    URL part from a title. Allowed characters are a - z, any digits,
+    and dashes. Spaces will be replaced with dashes before filtering,
+    and all other characters removed.
+  </p>
+
+<table><tr><td>
+<tt><span class="paren1">(<span class=""><i><span class="symbol">defun</span></i> make-url-part <span class="paren2">(<span class="">title</span>)</span><br>&nbsp;&nbsp;<span class="string">"Generate a url-part from a title. A url-part should only have<br>alphanumeric characters or dashes (in place of spaces)."</span><br>&nbsp;&nbsp;<span class="paren2">(<span class="">string-downcase <br>&nbsp;&nbsp;&nbsp;<span class="paren3">(<span class="">delete-if #'<span class="paren4">(<span class=""><i><span class="symbol">lambda</span></i> <span class="paren5">(<span class="">x</span>)</span> <span class="paren5">(<span class="">not <span class="paren6">(<span class="">or <span class="paren1">(<span class="">alphanumericp x</span>)</span> <span class="paren1">(<span class="">char= #\- x</span>)</span></span>)</span></span>)</span></span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren4">(<span class="">substitute #\- #\Space title</span>)</span></span>)</span></span>)</span></span>)</span>
+</tt></td></tr></table>
+
+  <p>
+    Now we can add a url-part attribute to our model, and we also need
+    to make sure that <strong>Elephant</strong> indexes our model so
+    that we can create queries that fetch instances of this class from
+    the store.
+  </p>
+
+<table><tr><td>
+<tt><span class="paren1">(<span class="default"><i><span class="symbol">defpclass</span></i> blog-post <span class="paren2">(<span class="default"></span>)</span><br>&nbsp;&nbsp;<span class="paren2">(<span class="default"><span class="paren3">(<span class="default">title <span class="keyword">:initarg</span> <span class="keyword">:title</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="keyword">:accessor</span> title</span>)</span><br>&nbsp;&nbsp;&nbsp;<span class="paren3">(<span class="default">body <span class="keyword">:initarg</span> <span class="keyword">:body</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="keyword">:accessor</span> body</span>)</span><br>&nbsp;&nbsp;&nbsp;<span class="paren3">(<span class="default">timestamp <span class="keyword">:initarg</span> <span class="keyword">:timestamp</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="keyword">:accessor</span> timestamp<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="keyword">:initform</span> <span class="paren4">(<span class="default">get-universal-time</span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="keyword">:index</span> t</span>)</span><br>&nbsp;&nbsp;&nbsp;<span class="paren3">(<span class="default">url-part <span class="keyword">:initarg</span> <span class="keyword">:url-part</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="keyword">:accessor</span> url-part<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="keyword">:initform</span> nil<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="keyword">:index</span> t</span>)</span></span>)</span></span>)</span>
+</tt></td></tr></table>
+
+  <p>
+    As you can see, we have defined a new attribute, and it is
+    initialized to <code>nil</code> if it is not specified when the
+    blog post is created. Since it is generated from the title, we can
+    generate it automatically when the blog post is created, by
+    writing a method that runs after <code>initialize-instance</code>,
+    which is run by <code>make-instance</code>. For more details on
+    object orientation in Common Lisp,
+    see <a href="http://gigamonkeys.com/book/object-reorientation-classes.html">Practical
+    Common Lisp, Chapter 17</a>.
+  </p>
+
+<table><tr><td><tt><span class="paren1">(<span class="default"><i><span class="symbol">defmethod</span></i> initialize-instance <span class="keyword">:after</span> <span class="paren2">(<span class="default"><span class="paren3">(<span class="default">obj blog-post</span>)</span> &amp;key</span>)</span><br>&nbsp;&nbsp;<span class="string">"If :url-part wasn't non-nil when making the instance, generate it<br>automatically."</span><br>&nbsp;&nbsp;<span class="paren2">(<span class="default"><i><span class="symbol">cond</span></i> <span class="paren3">(<span class="default"><span class="paren4">(<span class="default">eq nil <span class="paren5">(<span class="default">url-part obj</span>)</span></span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren4">(<span class="default">setf <span class="paren5">(<span class="default">url-part obj</span>)</span> <span class="paren5">(<span class="default">make-url-part <span class="paren6">(<span class="default">title obj</span>)</span></span>)</span></span>)</span></span>)</span></span>)</span></span>)</span></tt></td></tr></table>
+
+  <p>
+    Unfortunately, previously created posts are not automatically
+    added to indexes, so we would have to do that manually. Since we
+    have only created two posts so far, the easiest thing is to simply
+    re-create them. Adding them to the right indexes is left as an
+    exercise to the reader. Simply run the calls
+    to <code>make-instance</code> from part 1 of the tutorial.
+  </p>
+
+<pre>
+MY-BLOG&gt;  (make-instance 'blog-post :title "Hello blog world"
+                                       :body "First post!")
+#&lt;BLOG-POST oid:29&gt;
+MY-BLOG&gt; (make-instance 'blog-post :title "This is fun"
+                                      :body "Common Lisp is easy!")
+#&lt;BLOG-POST oid:30&gt;
+MY-BLOG&gt;
+</pre>
+
+  <p>
+    Because they are indexed, we no longer need to maintain a list of
+    posts separatly, so we can get rid of
+    the <code>*blog-posts*</code> variable. With indexing turned on we
+    can query the <strong>Elephant</strong> store directly instead.
+  </p>
+
+<pre>
+MY-BLOG> (drop-pobject *blog-posts*) ; Remove the list of blog posts from the store
+NIL
+</pre>
+
+  <p>
+    We of course remove <code>*blog-posts*</code> from our source code
+    as well. Next we will have to rewrite the code that used that
+    variable to query the store instead. This can be done with
+    functions such
+    as <code>get-instances-by-class</code>, <code>get-instances-by-value</code>
+    and <code>get-instances-by-range</code> (see
+    the <a href="http://common-lisp.net/project/elephant/doc/Persistent-Object-Indexing-API.html#Persistent-Object-Indexing-API">Elephant
+    API documentation for more information</a>). To get a list of
+    blog posts ordered by timestamp, we will use the latter function.
+  </p>
+
+  <p>
+    The arguments to <code>get-instances-by-range</code> are the class
+    we want to get instances of, the attribute we want to sort on, and
+    two values indicating a range. If the last two parameters are
+    both <code>nil</code>, all instances will be returned, ordered by
+    the ordering specified by the index.
+  </p>
+
+  <p>
+    In <code>generate-index-page</code> we can now
+    replace <code>(pset-list *blog-posts*)</code> with <code>(nreverse
+    (get-instances-by-range 'blog-post 'timestamp nil nil))</code>
+    (reverse to list posts by newest first).
+  </p>
+
+<table><tr><td><tt><span class="paren1">(<span class=""><i><span class="symbol">defun</span></i> generate-index-page <span class="paren2">(<span class=""></span>)</span><br>&nbsp;&nbsp;<span class="string">"Generate the index page showing all the blog posts."</span><br>&nbsp;&nbsp;<span class="paren2">(<span class=""><i><span class="symbol">with-output-to-string</span></i> <span class="paren3">(<span class="">stream</span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren3">(<span class="">html-template:fill-and-print-template <br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;#P<span class="string">"index.tmpl"</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren4">(<span class="">list <span class="keyword">:blog-posts</span> <br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren5">(<span class=""><i><span class="symbol">loop</span></i> for blog-post in <span class="paren6"><b>(<span class="">nreverse <span class="paren1">(<span class="">get-instances-by-range 'blog-post 'timestamp nil nil</span>)</span></span>)</span></b><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;collect <span class="paren6">(<span class="">list <span class="keyword">:title</span> <span class="paren1">(<span class="">title blog-post</span>)</span> <span class="keyword">:body</span> <span class="paren1">(<span class="">body blog-post</span>)</span></span>)</span></span>)</span></span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="keyword">:stream</span> stream</span>)</span></span>)</span></span>)</span></tt></td></tr></table>
+
+  <h2><a name="s3">Showing blog post on separate pages</a></h2>
+  <p>
+    With all this in place, we can then create the functionality for
+    showing blog posts in their own pages. First, let's create a
+    template, <a href="source/post.tmpl"><code>post.tmpl</code></a>,
+    that we will use for this.
+  </p>
+
+<pre>
+&lt;!DOCTYPE html&gt;
+&lt;html&gt;
+&lt;head&gt;
+  &lt;title&gt;&lt;!-- tmpl_var title --&gt; - My Blog&lt;/title&gt;
+  &lt;style type="text/css"&gt;
+body {
+    margin-left: 10%;
+    margin-right: 10%;
+    background: white;
+    color: black;
+}
+
+h1 {
+    font-variant: small-caps;
+    border-bottom: 2px solid black;
+    color: darkblue;
+}
+
+h2 {
+    font-variant: small-caps;
+    color: darkblue;
+}
+  &lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+  &lt;h1&gt;* &lt;!-- tmpl_var title --&gt;&lt;/h1&gt;
+  &lt;div&gt;
+    &lt;!-- tmpl_var body --&gt;
+  &lt;/div&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</pre>
+  
+  <p>
+    Next, we will create a
+    function <code>generate-blog-post-page</code> that accepts a
+    url-part uniquely identifying the blog post (as discussed above),
+    and generates the HTML based on the template and the blog post
+    object.
+  </p>
+
+<table><tr><td><tt><span class="paren1">(<span class=""><i><span class="symbol">defun</span></i> generate-blog-post-page <span class="paren2">(<span class="">url-part</span>)</span><br>&nbsp;&nbsp;<span class="paren2">(<span class=""><i><span class="symbol">with-output-to-string</span></i> <span class="paren3">(<span class="">stream</span>)</span> <span class="comment">; Create a stream that will give us a sting<br>
+</span> &nbsp;&nbsp;&nbsp;<span class="paren3">(<span class=""><i><span class="symbol">let</span></i> <span class="paren4">(<span class=""><span class="paren5">(<span class="">blog-post <span class="paren6">(<span class="">get-instance-by-value 'blog-post 'url-part url-part</span>)</span></span>)</span></span>)</span> <span class="comment">; Get the blog post we're interested in<br>
+</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren4">(<span class="">html-template:fill-and-print-template <br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;#P<span class="string">"post.tmpl"</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren5">(<span class="">list <span class="keyword">:title</span> <span class="paren6">(<span class="">title blog-post</span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="keyword">:body</span> <span class="paren6">(<span class="">body blog-post</span>)</span></span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="keyword">:stream</span> stream</span>)</span></span>)</span></span>)</span></span>)</span></tt></td></tr></table>
+
+  <p>
+    Let's test it!
+  </p>
+
+<pre>
+MY-BLOG&gt; (generate-blog-post-page "another-blog-post")
+WARNING:
+   New template printer for #P"/Users/vetler/Documents/devel/cl-webapp-intro/source/post.tmpl" created
+"&lt;!DOCTYPE html&gt;
+&lt;html&gt;
+&lt;head&gt;
+  &lt;title&gt;Another blog post - My Blog&lt;/title&gt;
+  &lt;link rel=\"stylesheet\" type=\"text/css\" href=\"style.css\"/&gt;
+&lt;/head&gt;
+&lt;body&gt;
+  &lt;h1&gt;Another blog post&lt;/h1&gt;
+  &lt;div&gt;
+    Common Lisp isn&#039;t so hard
+  &lt;/div&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+"
+MY-BLOG&gt; 
+</pre>
+
+  <p>
+    Now we need to make the web server call this function when it gets
+    a request for a blog post page. We can do that by modifying the
+    dispatch table, and creating a regex dispatcher that sends all
+    requests matching a particular regular expression to our
+    function.
+  </p>
+
+  <p>
+    We will also have to change the previously defined dispatcher to
+    only match the single slash. If we kept it as it is now, any URL
+    would show the index page.
+  </p>
+
+<table><tr><td><tt><span class="paren1">(<span class=""><i><span class="symbol">setq</span></i> <span class="special">hunchentoot:*dispatch-table*</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren2">(<span class="">list <span class="paren3">(<span class="">hunchentoot:create-regex-dispatcher <span class="string">"^/$"</span> 'generate-index-page</span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren3">(<span class="">hunchentoot:create-regex-dispatcher <span class="string">"^/view/$"</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;'generate-blog-post-page</span>)</span></span>)</span></span>)</span></tt></td></tr></table>
+
+  <p>
+    This will result in <code>generate-blog-post-page</code> being
+    called if we go to <code>http://localhost:8080/view/</code>. The
+    blog post to be viewed will be specified in the query string,
+    i.e. <code>http://localhost:8080/view/?hello-blog-world</code>.
+  </p>
+
+  <p>
+    Unfortunately we will have to
+    change <code>generate-blog-post-page</code> to read the query string
+    before fetching the page from the store. We will simply wrap the
+    existing function body with a <code>let</code> macro.
+  </p>
+
+<table><tr><td><tt><span class="paren1">(<span class=""><i><span class="symbol">defun</span></i> generate-blog-post-page <span class="paren2">(<span class=""></span>)</span><br>&nbsp;&nbsp;<span class="paren2"><b>(</b><span class=""><b><i><span class="symbol">let</span></i> <span class="paren3">(<span class=""><span class="paren4">(<span class="">url-part <span class="paren5">(<span class="">hunchentoot:query-string</span>)</span></span>)</span></span>)</span></b><br>&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren3">(<span class=""><i><span class="symbol">with-output-to-string</span></i> <span class="paren4">(<span class="">stream</span>)</span> <span class="comment">; Create a stream that will give us a sting<br>
+</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren4">(<span class=""><i><span class="symbol">let</span></i> <span class="paren5">(<span class=""><span class="paren6">(<span class="">blog-post <span class="paren1">(<span class="">get-instance-by-value 'blog-post 'url-part url-part</span>)</span></span>)</span></span>)</span> <span class="comment">; Get the right blog post<br>
+</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren5">(<span class="">html-template:fill-and-print-template <br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;#P<span class="string">"post.tmpl"</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren6">(<span class="">list <span class="keyword">:title</span> <span class="paren1">(<span class="">title blog-post</span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="keyword">:body</span> <span class="paren1">(<span class="">body blog-post</span>)</span></span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="keyword">:stream</span> stream</span>)</span></span>)</span></span>)</span></span>)</span></span>)</span></tt></td></tr></table>
+
+  <p>
+    The blog posts are now available on separate URLs, for
+    instance <a href="http://localhost:8080/view/?hello-blog-world">http://localhost:8080/view/?hello-blog-world</a>
+    [<a href="screenshot1.png">screenshot</a>].
+  </p>
+
+  <h2><a name="s4">Linking from the front page</a></h2>
+  <p>
+    The functionality implemented above is of course of no use if no
+    one can find our pages, so we will add links from the front
+    page. First, the function that generates the index page will have
+    to be changed to also send the <code>url-part</code> attribute to
+    the template. We simply add <code>url-part</code> to the list of
+    parameters sent to the template
+    in <codE>generate-blog-post-page</code>.
+  </p>
+
+<table><tr><td><tt><span class="paren1">(<span class="">list <span class="keyword">:title</span> <span class="paren2">(<span class="">title blog-post</span>)</span> <br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="keyword">:body</span> <span class="paren2">(<span class="">body blog-post</span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="keyword">:url-part</span> <span class="paren2">(<span class="">url-part blog-post</span>)</span></span>)</span></tt></td></tr></table>
+
+  <p>
+    Next, the template will be changed so that the blog post title is
+    a link to the blog post page.
+  </p>
+
+<pre>
+&lt;h2&gt;* &lt;a href="/view/?&lt;!-- tmpl_var url-part --&gt;"&gt;&lt;!-- tmpl_var title --&gt;&lt;/a&gt;&lt;/h2&gt;
+</pre>
+
+  <p>
+    The <a href="http://localhost:8080/">front page</a> now both lists
+    the blog posts and links to the separate pages
+    [<a href="screenshot2.png">screenshot</a>].
+  </p>
+
+  <h2><a name="s5">Editing blog posts</h2>
+  <p>
+    Finally, we will create a page for editing blog posts, and
+    functionality for saving edits. First, we create a template with a
+    form for editing the blog posts.
+  </p>
+
+<pre>
+&lt;!DOCTYPE html&gt;
+&lt;html&gt;
+&lt;head&gt;
+  &lt;title&gt;&lt;!-- tmpl_var title --&gt; - My Blog&lt;/title&gt;
+  &lt;style type="text/css"&gt;
+body {
+    margin-left: 10%;
+    margin-right: 10%;
+    background: white;
+    color: black;
+}
+
+h1 {
+    font-variant: small-caps;
+    border-bottom: 2px solid black;
+    color: darkblue;
+}
+
+h2 {
+    font-variant: small-caps;
+    color: darkblue;
+}
+
+textarea {
+  width: 30em; height: 20em;"
+}
+  &lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+  &lt;h1&gt;Edit blog post&lt;/h1&gt;
+  &lt;form action="?&lt;!-- tmpl_var url-part --&gt;" method="POST"&gt;
+    &lt;h2&gt;Title&lt;/h2&gt;
+    &lt;input style="width: 20em;" type="text" name="title" value="&lt;!-- tmpl_var title --&gt;"/&gt;
+    
+    &lt;h2&gt;Body&lt;/h2&gt;
+    &lt;textarea name="body"&gt;&lt;!-- tmpl_var body --&gt;&lt;/textarea&gt;
+
+    &lt;input style="display: block" type="submit"/&gt;
+  &lt;/form&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</pre>  
+
+  <p>
+    Next, we must make the web server serve this page. We happen to
+    have a function that does a lot of what we need to do - fetch the
+    right blog post instance and
+    call <code>fill-and-print-template</code>. The function we use for
+    generating blog posts pages, <code>generate-blog-post-page</code>,
+    does exactly this, but the template name is hardcoded into the
+    function.
+  </p>
+
+  <p>
+    To avoid duplicating the function, we can make it take the
+    template filename as a parameter, but if we do that then we will
+    have to create some additional functions that the web server can
+    use to generate the right page with the right template.
+  </p>
+
+<table><tr><td><tt><span class="paren1">(<span class=""><i><span class="symbol">defun</span></i> generate-blog-post-page <span class="paren2">(<span class="">template</span>)</span><br>&nbsp;&nbsp;...</span>)</span> <span class="comment">; As before, except template filename replaced with the function parameter<br>
+</span><br>
+<span class="paren1">(<span class=""><i><span class="symbol">defun</span></i> view-blog-post-page <span class="paren2">(<span class=""></span>)</span><br>&nbsp;&nbsp;<span class="string">"Generate a page for viewing a blog post."</span><br>&nbsp;&nbsp;<span class="paren2">(<span class="">generate-blog-post-page #P<span class="string">"post.tmpl"</span></span>)</span></span>)</span><br><br>
+<span class="paren1">(<span class=""><i><span class="symbol">defun</span></i> edit-blog-post <span class="paren2">(<span class=""></span>)</span><br>&nbsp;&nbsp;<span class="string">"Generate a page for editing a blog post."</span><br>&nbsp;&nbsp;<span class="paren2">(<span class="">generate-blog-post-page #P<span class="string">"post-edit.tmpl"</span></span>)</span></span>)</span><br><br>
+<span class="comment">; Update the dispatch table<br>
+</span><span class="paren1">(<span class=""><i><span class="symbol">setq</span></i> <span class="special">hunchentoot:*dispatch-table*</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren2">(<span class="">list <span class="paren3">(<span class="">hunchentoot:create-regex-dispatcher <span class="string">"^/$"</span> 'generate-index-page</span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren3">(<span class="">hunchentoot:create-regex-dispatcher <span class="string">"^/view/$"</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;'view-blog-post-page</span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren3">(<span class="">hunchentoot:create-regex-dispatcher <span class="string">"^/edit/$"</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;'edit-blog-post</span>)</span></span>)</span></span>)</span></tt></td></tr></table>
+
+  <p>
+    Now <a href="http://localhost:8080/edit/?hello-blog-world">http://localhost:8080/edit/?hello-blog-world</a>
+    [<a href="screenshot3.png">screenshot</a>] will show a form for editing the blog post.
+  </p>
+
+  <p>
+    Finally we will need to handle what happens when the user submits
+    the form. The current form will submit its data to the same URL
+    that it uses for generating the blog post, but use a POST request
+    instead of GET. First, let's change <code>edit-blog-post</code> to
+    handle differently if the request is a POST request.
+  </p>
+
+<table><tr><td><tt><span class="paren1">(<span class="default"><i><span class="symbol">defun</span></i> edit-blog-post <span class="paren2">(<span class="default"></span>)</span><br>&nbsp;&nbsp;<span class="paren2">(<span class="default"><i><span class="symbol">cond</span></i> <span class="paren3">(<span class="default"><span class="paren4">(<span class="default">eq <span class="paren5">(<span class="default">hunchentoot:request-method</span>)</span> <span class="keyword">:GET</span></span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren4">(<span class="default">generate-blog-post-page #P<span class="string">"post-edit.tmpl"</span></span>)</span></span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren3">(<span class="default"><span class="paren4">(<span class="default">eq <span class="paren5">(<span class="default">hunchentoot:request-method</span>)</span> <span class="keyword">:POST</span></span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren4">(<span class="default">save-blog-post</span>)</span></span>)</span></span>)</span></span>)</span></tt></td></tr></table>
+
+  <p>
+    Then we just have to define <code>save-blog-post</code>.
+  </p>
+
+<table><tr><td><tt><span class="paren1">(<span class="default"><i><span class="symbol">defun</span></i> save-blog-post <span class="paren2">(<span class="default"></span>)</span><br>&nbsp;&nbsp;<span class="string">"Read POST data and modify blog post."</span><br>&nbsp;&nbsp;<span class="paren2">(<span class="default"><i><span class="symbol">let</span></i> <span class="paren3">(<span class="default"><span class="paren4">(<span class="default">blog-post <br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren5">(<span class="default">get-instance-by-value 'blog-post<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;'url-part <span class="paren6">(<span class="default">hunchentoot:query-string</span>)</span></span>)</span></span>)</span></span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren3">(<span class="default">setf <span class="paren4">(<span class="default">title blog-post</span>)</span> <span class="paren4">(<span class="default">hunchentoot:post-parameter <span class="string">"title"</span></span>)</span></span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren3">(<span class="default">setf <span class="paren4">(<span class="default">body blog-post</span>)</span> <span class="paren4">(<span class="default">hunchentoot:post-parameter <span class="string">"body"</span></span>)</span></span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren3">(<span class="default">setf <span class="paren4">(<span class="default">url-part blog-post</span>)</span> <span class="paren4">(<span class="default">make-url-part <span class="paren5">(<span class="default">title blog-post</span>)</span></span>)</span></span>)</span><br>&nbsp;&nbsp;&nbsp;&nbsp;<span class="paren3">(<span class="default">hunchentoot:redirect <span class="paren4">(<span class="default">url-part blog-post</span>)</span></span>)</span></span>)</span></span>)</span></tt></td></tr></table>
+
+  <p>
+    This function first gets the blog post we're editing from the
+    store, using the old <code>url-part</code> from the query
+    string. Then it is just a matter of getting the post parameters and
+    setting the attributes in the blog post instance. Finally a
+    new <code>url-part</code> is generated and the user redirected to
+    the newly edited blog post.
+  </p>
+
+  <h2><a name="s6">End of part 2</a></h2>
+  <p>
+    The basic example from the first part has now been extended with a
+    little more functionality, but there is still a lot missing and it
+    has a lot of flaws to be a proper web application. However, this
+    should be enough to give you an overview of the basics and get you
+    started.
+  </p>
+
+  <p>
+    Stay tuned for part 3!
+  </p>
+
+<script type="text/javascript">
+var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
+document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
+</script>
+<script type="text/javascript">
+try {
+var pageTracker = _gat._getTracker("UA-7029768-1");
+pageTracker._trackPageview();
+} catch(err) {}</script>
+</body>
+</html>
